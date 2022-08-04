@@ -16,6 +16,8 @@ const {MongoClient} = require('mongodb');
 const dateTime = require('node-datetime');
 const { createServer } = require('http');
 const req = require('express/lib/request');
+const { text } = require('express');
+const { throws } = require('assert');
 
 
 // Environment 
@@ -74,6 +76,7 @@ class mySite{
         this.logEvent = this.logEvent.bind(this);
         this.addDataTodo = this.addDataTodo.bind(this);
         this.getToDoList = this.getToDoList.bind(this);
+        this.updateStatus = this.updateStatus.bind(this); 
 
         // Check for auth 
         this.authenticated = false; 
@@ -107,7 +110,6 @@ class mySite{
         // Get User Info
         if(!req){this.logEvent("Login Function Failure!"); try{res.send("Internal Server Error, please try again later...")}catch(err){this.logEvent(`${err}`)}; return;}
         const {email, password} = req.body; 
-        console.log(email)
         const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
         try{
             await client.connect(); 
@@ -203,7 +205,6 @@ class mySite{
             const userRecords = await userData.findOne({'userID' : (user.toLowerCase())}); 
             // Check if the user has any data attached to them 
             if(!userRecords){
-                this.logEvent("Data Retrieved")
                 await userData.insertOne({'userID' : (user.toLowerCase()), 'toDoListData' : [] }); 
                 data = {
                     userID: user
@@ -231,7 +232,6 @@ class mySite{
         // Lets Get the New Items Here
         const {newItems} = req.body
         if(newItems.itemID == null){newItems.itemID = uuid.v4(); }
-        console.log(newItems.itemID)
         // Connect the Database
         const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
         try{
@@ -262,8 +262,44 @@ class mySite{
     // This will take the recieved id and compare it with all uuids in the toDoData and update the status of
     // whether it was complete or not. 
     // Problem: The server and the client side will have different ids if an item was added but the page was not reloaded
-    updateStatus(req,res){
-        return; 
+    async updateStatus(req,res){    
+        if(!req.session.userId){ return; }
+        const user = req.session.userId; 
+        const {info} = req.body; 
+        const itemID = info.itemID;
+        const Status = info.Status;
+        this.logEvent(`ID: ${info.itemID}, Status: ${info.Status}`);
+        /*
+        const {itemID, Name, Status} = req.body; 
+        this.logEvent(`ID: ${itemID}, Name: ${Name}, Status: ${Status}`)
+        */
+        // Connect the Database
+        const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
+        try{
+            await client.connect(); 
+            const db = client.db(userDbName); 
+            const userData = db.collection(toDoListCollection); 
+            const data = await userData.findOne({'userID' : (user.toLowerCase())}); 
+            
+            if(data){
+                
+                userData.updateOne({userID : user.toLowerCase()}, {$set : {"toDoListData.$[updateItem].Status" : Status} }, 
+                {'arrayFilters' : 
+                    [
+                        {"updateItem.itemID" : itemID}
+                    ]
+                }, (err,res) => {
+                    if(err) this.logEvent(`Error Updating Status of element ${itemID} ==> ${err}`);
+                })
+            }
+            
+        
+        }catch(err){
+            this.logEvent(`Unable to Add Data to This User! => ${err}`)
+            res.send("Unable to Add Item"); 
+        }
+
+        
     }
     
 
@@ -281,7 +317,7 @@ class mySite{
         this.server.get('/dashboard', (req,res) => { req.session.userId ? res.render('toDoPage') : res.redirect('/login'); });
         this.server.get('/userData', this.getToDoList); 
         this.server.post('/userData', this.addDataTodo)
-        
+        this.server.post('/updateStatus', this.updateStatus)
         // Logout Routes
         this.server.get('/logout', (req,res) => { req.session.destroy(); res.redirect('/login'); });
         

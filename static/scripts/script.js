@@ -13,28 +13,38 @@ function addEventListeners(){
 function handleCheckBoxes(){
     // Need to Convert to JSON with appropriate fields
     let data = {
-        newItems : {
-             itemID : this.id, 
-             Name : this.value, 
-             Status : this.checked
+        info:{
+            itemID: this.id, 
+            Name : this.value,
+            Status: this.checked
         }
-    };
-    console.log(data);
+    }
 
+    xhr.open('POST', '/updateStatus', true); 
+    xhr.onload = () => { if(xhr.status != 200) console.log(`Error: ${xhr.status}`) }
+
+    console.log(data);
+    xhr.setRequestHeader('Content-Type', 'application/json'); 
+    xhr.send(JSON.stringify(data)); 
 }
 
+ 
 
 function updateDB(itemName, status, id, tempId = null){
     // Need to Convert to JSON with appropriate fields
     let itemidenti = '';
     if(tempId != null){ itemidenti = null}
     else{ itemidenti = id; }
-    let data = {
-        newItems : {
-             itemID : itemidenti, 
-             Name : `${itemName}`, 
-             Status : status
+    if(status) status = 1; 
+    else status = 0; 
+    let data = 
+    {
+        newItems: {
+            itemID : `${itemidenti}`, 
+            Name : `${itemName}`, 
+            Status : `${status}`
         }
+        
     };
 
     xhr.open('POST', '/userData', true); 
@@ -102,7 +112,7 @@ function loadData(data){
     const list = document.querySelector('#list'); 
     data.forEach((element) => {
         console.log(`Appending ${element.Name}`); 
-        createAListItem(list, `${element.Name}`, element.status, element.itemID)
+        createAListItem(list, `${element.Name}`, element.Status, element.itemID)
     });
     addEventListeners()
 }
