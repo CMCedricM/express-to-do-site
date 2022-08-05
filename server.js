@@ -1,5 +1,4 @@
 // Standard Libraries
-const https = require('https'); 
 const express = require('express'); 
 const session = require('express-session'); 
 const cors = require('cors'); 
@@ -10,14 +9,11 @@ const path = require('path');
 const bcrypt = require('bcrypt');
 const fs = require('fs');
 const uuid = require('uuid')
-
 const {MongoClient} = require('mongodb');
-
 const dateTime = require('node-datetime');
-const { createServer } = require('http');
-const req = require('express/lib/request');
-const { text } = require('express');
-const { throws } = require('assert');
+
+// For https
+const https = require('https'); 
 
 
 // Environment 
@@ -41,8 +37,8 @@ const {
 
 
 // HTML File Paths 
-const staticFolder = path.join(__dirname, 'static'); // /Users/cedric-men/{dir}/node-project/static
-const dynamicPagesFolder = path.join(__dirname, 'views'); // /Users/cedric-men/{dir}/node-project/views
+const staticFolder = path.join(__dirname, 'static'); // /Users/home-dir/{dir}/node-project/static
+const dynamicPagesFolder = path.join(__dirname, 'views'); // /Users/home-dir/{dir}/node-project/views
 
 
 // Database Connection Info 
@@ -69,6 +65,12 @@ class mySite{
         this.server.set('views', dynamicPagesFolder); 
         this.server.set('view engine', 'html'); 
 
+        // Set Database Connection
+        this.CLIENT = new MongoClient(dbURL, {useNewUrlParser: true}); 
+        this.db = this.linkDB(); 
+        this.userRecords = this.linkUserDB();
+        this.userData = this.linkToDoDB(); 
+
         // Bind Function to Class
         //this.runtime = this.runtime.bind(this); <--- Example of binding
         this.login = this.login.bind(this);
@@ -78,6 +80,7 @@ class mySite{
         this.getToDoList = this.getToDoList.bind(this);
         this.updateStatus = this.updateStatus.bind(this); 
         this.removeData = this.removeData.bind(this);
+        
 
         // Check for auth 
         this.authenticated = false; 
@@ -106,19 +109,30 @@ class mySite{
         console.log(`${this.getTime()} ----> ${text}`)
     }
 
+    linkDB(){
+        this.CLIENT.connect(); 
+        return this.CLIENT.db(userDbName); 
+          
+    }
+
+    linkUserDB(){
+        const userRecords = this.db.collection(userDbCollection); 
+        return userRecords; 
+    }
+
+    linkToDoDB(){ 
+        const userData = this.db.collection(toDoListCollection); 
+        return userData
+    }
+
     async login(req, res){
 
         // Get User Info
         if(!req){this.logEvent("Login Function Failure!"); try{res.send("Internal Server Error, please try again later...")}catch(err){this.logEvent(`${err}`)}; return;}
         const {email, password} = req.body; 
-        const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
         try{
-            await client.connect(); 
-            const db = client.db(userDbName);
-            const users = db.collection(userDbCollection); 
-            const user = await users.findOne({email : email.toLowerCase()}); 
+            const user = await this.userRecords.findOne({email : email.toLowerCase()}); 
          
-
             if(user){
                 const valid = await bcrypt.compare(password, user.password); 
                 if(valid){
@@ -141,11 +155,8 @@ class mySite{
         }
         catch(err){
             this.logEvent(`System Error => ${err}\n\n`);
-            //console.log(`\n${logDateTime} ----> System Error => ${err}\n\n`);
         }
-        finally{
-            client.close(); 
-        }
+        
     }
 
 
@@ -188,25 +199,17 @@ class mySite{
         }
     }
 
-    
-
-    // This area will handle to do list actions
 
     async getToDoList(req, res){
         if(!req.session.userId){ res.redirect('/login'); }
         const user = req.session.userId; 
         let data = {}; 
 
-        // Connect the Database
-        const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
         try{
-            await client.connect(); 
-            const db = client.db(userDbName); 
-            const userData = db.collection(toDoListCollection); 
-            const userRecords = await userData.findOne({'userID' : (user.toLowerCase())}); 
+            const userRecords = await this.userData.findOne({'userID' : (user.toLowerCase())}); 
             // Check if the user has any data attached to them 
             if(!userRecords){
-                await userData.insertOne({'userID' : (user.toLowerCase()), 'toDoListData' : [] }); 
+                await this.userData.insertOne({'userID' : (user.toLowerCase()), 'toDoListData' : [] }); 
                 data = {
                     userID: user
                 }
@@ -217,8 +220,6 @@ class mySite{
         }catch(err){
             this.logEvent(`Unable to Retrieve Data to This User! => ${err}`)
             res.status(500).send("Unable to Add Item"); 
-        }finally{
-            client.close()
         }
 
         res.status(200).json(data);
@@ -226,7 +227,6 @@ class mySite{
     }
 
 
-  
     async addDataTodo(req, res){
         if(!req.session.userId) res.redirect('/login'); 
         const user = req.session.userId; 
@@ -240,21 +240,15 @@ class mySite{
                                     'site' : '/logout'}) ;
             return;
         }
-        // Connect the Database
-        const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
+       
         try{
-            await client.connect(); 
-            const db = client.db(userDbName); 
-            const userData = db.collection(toDoListCollection); 
-            const data = await userData.findOne({'userID' : (user.toLowerCase())}); 
+            const data = await this.userData.findOne({'userID' : (user.toLowerCase())}); 
             // Check if the user has any data attached to them 
             if(!data){
-                //this.logEvent("Data Inserted")
-                await userData.insertOne({'userID' : (user.toLowerCase()), 'toDoListData' : [] }); 
+                await this.userData.insertOne({'userID' : (user.toLowerCase()), 'toDoListData' : [] }); 
             }
-            userData.updateOne({'userID' : (user.toLowerCase())}, {$push: {'toDoListData' : newItems }}, (err, res) => {
+            this.userData.updateOne({'userID' : (user.toLowerCase())}, {$push: {'toDoListData' : newItems }}, (err, res) => {
                 if(err) this.logEvent(`There was an error appending the data ==> ${err}`); 
-                client.close()
             })
         
         }catch(err){
@@ -267,9 +261,11 @@ class mySite{
 
     }
 
+   
     // This will take the recieved id and compare it with all uuids in the toDoData and update the status of
     // whether it was complete or not. 
     // Problem: The server and the client side will have different ids if an item was added but the page was not reloaded
+    // Problem -> Solved
     async updateStatus(req,res){    
         if(!req.session.userId){ return; }
         const user = req.session.userId; 
@@ -281,17 +277,10 @@ class mySite{
         const {itemID, Name, Status} = req.body; 
         this.logEvent(`ID: ${itemID}, Name: ${Name}, Status: ${Status}`)
         */
-        // Connect the Database
-        const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
         try{
-            await client.connect(); 
-            const db = client.db(userDbName); 
-            const userData = db.collection(toDoListCollection); 
-            const data = await userData.findOne({'userID' : (user.toLowerCase())}); 
-            
+            const data = await this.userData.findOne({'userID' : (user.toLowerCase())}); 
             if(data){
-                
-                userData.updateOne({userID : user.toLowerCase()}, {$set : {"toDoListData.$[updateItem].Status" : Status} }, 
+                this.userData.updateOne({userID : user.toLowerCase()}, {$set : {"toDoListData.$[updateItem].Status" : Status} }, 
                 {'arrayFilters' : 
                     [
                         {"updateItem.itemID" : itemID}
@@ -300,8 +289,6 @@ class mySite{
                     if(err) this.logEvent(`Error Updating Status of element ${itemID} ==> ${err}`);
                 })
             }
-            
-        
         }catch(err){
             this.logEvent(`Unable to Add Data to This User! => ${err}`)
             res.send("Unable to Add Item"); 
@@ -316,27 +303,17 @@ class mySite{
         user = req.session.userId; 
         /*this.logEvent(`itemID: ${JSON.parse(items[0]).itemID}`)
         console.log('A Delete Request was recieved')*/
-
-        
-        // Connect the Database
-        const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
         try{
-            await client.connect(); 
-            const db = client.db(userDbName); 
-            const userData = db.collection(toDoListCollection); 
-            const data = await userData.findOne({'userID' : (user.toLowerCase())}); 
-            
+            const data = await this.userData.findOne({'userID' : (user.toLowerCase())});  
             if(data){ 
                 for(let i = 0; i < items.length; i++){
                     const itemID = JSON.parse(items[i]).itemID
-                    userData.updateOne({userID : user.toLowerCase()}, {$pull : {'toDoListData' : {'itemID' : `${itemID}`}}}, (err,res) =>{
+                    this.userData.updateOne({userID : user.toLowerCase()}, {$pull : {'toDoListData' : {'itemID' : `${itemID}`}}}, (err,res) =>{
                         if(err)this.logEvent(`Error in updating: ===> ${err}`); 
                     });
-                }
-                
+                }    
             }
-            
-            
+               
         }catch(err){
             this.logEvent(`Unable to Remove Data From Database! ==> ${err}`)
         }
@@ -360,10 +337,8 @@ class mySite{
         this.server.post('/removeData', this.removeData)
         // Logout Routes
         this.server.get('/logout', (req,res) => { req.session.destroy(); res.redirect('/login'); });
-        
         // Catch Bad URL
         this.server.all('*', (req, res) => { res.status(404).render('badPage'); } )
-        
         // For HTTPS 
         //https.createServer(httpsOptions, this.server).listen(this.PORT, () => { console.log(`Server Listening at Port ${this.PORT}\n\n`); } )
         // Without HTTPS

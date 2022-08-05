@@ -1,7 +1,6 @@
 const xhr = new XMLHttpRequest()
 
-document.getElementById('add-data').addEventListener('click', addItemsToList)
-
+document.getElementById('add-data').addEventListener('click', addItemsToList);
 document.getElementById('remove-data').addEventListener('click', removeData); 
 
 // For now lets just assume we want to delete all completed items, not individual ones yet, we can add that later
@@ -27,8 +26,7 @@ function removeData(){
             console.log(data[i])
         }
     }
-    removeFromDB(buffer)
-    
+    removeFromDB(buffer);
 } 
 
 // This will update the data in the db
@@ -40,16 +38,13 @@ function removeFromDB(buffer){
         if(xhr.status == 418){ console.log("Well something doesn't Work Right, try again later!")}
         else if(xhr.status != 200){ console.log("Error!"); }
     }
-
     xhr.setRequestHeader('Content-Type', 'application/json'); 
     xhr.send(JSON.stringify(buffer));
 }
 
 function addEventListeners(){
     const elements = document.getElementsByClassName('check-button') 
-    for(let i = 0; i < elements.length; i++){
-        elements[i].addEventListener('click', handleCheckBoxes, false);
-    }
+    for(let i = 0; i < elements.length; i++){ elements[i].addEventListener('click', handleCheckBoxes, false);}
 }
 
 function handleCheckBoxes(){
@@ -61,11 +56,8 @@ function handleCheckBoxes(){
             Status: this.checked, 
         }
     }
-
     xhr.open('POST', '/updateStatus', true); 
     xhr.onload = () => { if(xhr.status != 200) console.log(`Error: ${xhr.status}`) }
-
-    console.log(data);
     xhr.setRequestHeader('Content-Type', 'application/json'); 
     xhr.send(JSON.stringify(data)); 
 }
@@ -142,7 +134,8 @@ function createAListItem(parent, itemName, checked, id=null){
 }
 
 
-function addItemsToList(){
+function addItemsToList(e){
+    e.preventDefault()
     const inputField = document.getElementById('add-item-field'); 
     // Check if the input field is an empty String
     if(!(inputField.value).trim().length){ return; }
@@ -174,7 +167,7 @@ function showList(){
         if(xhr.status != 200){
             console.log("Errror" , xhr.responseText); 
         }else{
-            document.getElementById('welcome-user').textContent = `Welcome, ${JSON.parse(xhr.responseText).userID}!`
+            document.getElementById('welcome-user').textContent = `Welcome, ${(JSON.parse(xhr.responseText).userID).toUpperCase()}!`
             loadData(JSON.parse(xhr.responseText).toDoListData)
         }
 

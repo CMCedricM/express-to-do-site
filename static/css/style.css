@@ -29,7 +29,7 @@
 
 
 .main-body{ 
-    background: linear-gradient(to right, #db442d, #bc624b);
+    background: linear-gradient(to right, #db442d, #FCF6CF);
     /* background: gray; */
 }
 
@@ -44,6 +44,7 @@
 .list-element-span{
     margin: 20px; 
     border-style: solid;
+    border-radius: 5px;
     padding:20px;
     font-size: larger;
     font-weight: bold;
