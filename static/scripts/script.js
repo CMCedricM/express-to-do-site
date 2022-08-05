@@ -2,6 +2,48 @@ const xhr = new XMLHttpRequest()
 
 document.getElementById('add-data').addEventListener('click', addItemsToList)
 
+document.getElementById('remove-data').addEventListener('click', removeData); 
+
+// For now lets just assume we want to delete all completed items, not individual ones yet, we can add that later
+function removeData(){
+    const data = document.getElementsByClassName('list-element-span');
+    let buffer = {items: [] }; 
+    // Lets find all completed items and then delete them and mark their remove attribute to true
+    // The issue here is that as I read through the list, i am also deleting elements, which overall 
+    // changes the indices => out of bounds
+    // The Fix: Read the Array Backwards
+    for(let i = data.length-1; i >= 0; i--){
+        try{
+            info = data[i].children[0];
+            if(info.checked){
+                buffer['items'].push(JSON.stringify({
+                itemID: info.id, 
+                Remove : true 
+                }))
+                data[i].remove()
+            }   
+        }catch(err){
+            console.log(err);
+            console.log(data[i])
+        }
+    }
+    removeFromDB(buffer)
+    
+} 
+
+// This will update the data in the db
+function removeFromDB(buffer){
+    if(buffer.items.length == 0) { return; }
+    console.log("Data: " + buffer.items);
+    xhr.open('POST', '/removeData', true ); 
+    xhr.onload = () => {
+        if(xhr.status == 418){ console.log("Well something doesn't Work Right, try again later!")}
+        else if(xhr.status != 200){ console.log("Error!"); }
+    }
+
+    xhr.setRequestHeader('Content-Type', 'application/json'); 
+    xhr.send(JSON.stringify(buffer));
+}
 
 function addEventListeners(){
     const elements = document.getElementsByClassName('check-button') 
@@ -16,7 +58,7 @@ function handleCheckBoxes(){
         info:{
             itemID: this.id, 
             Name : this.value,
-            Status: this.checked
+            Status: this.checked, 
         }
     }
 
@@ -28,7 +70,6 @@ function handleCheckBoxes(){
     xhr.send(JSON.stringify(data)); 
 }
 
- 
 
 function updateDB(itemName, status, id, tempId = null){
     // Need to Convert to JSON with appropriate fields
@@ -42,15 +83,22 @@ function updateDB(itemName, status, id, tempId = null){
         newItems: {
             itemID : `${itemidenti}`, 
             Name : `${itemName}`, 
-            Status : `${status}`
+            Status : `${status}`, 
+            Remove: false
         }
         
     };
 
     xhr.open('POST', '/userData', true); 
     xhr.onload = () => { 
-        if(xhr.status != 200){ console.log("Could not add item to Cloud!"); }
+        if(xhr.status == 403){ 
+            response = JSON.parse(xhr.responseText); 
+            alert(`${response.info}`); 
+            window.location = response.site;
+        }
+        else if(xhr.status != 200) { alert(`${xhr.responseText}`); }
         else if(tempId != null) { document.getElementById(id).id= xhr.responseText; }
+        
     }
     xhr.onerror = () => { console.log(`Fatal Error: ${xhr.response}`)}
     xhr.setRequestHeader('Content-Type', 'application/json'); 
@@ -83,6 +131,7 @@ function createAListItem(parent, itemName, checked, id=null){
      span.className = 'list-element-span'
      // Append Created Elements
      span.append(input)
+     input.append(label)
      span.append(label)
      span.append(br)
      parent.append(span);
@@ -101,7 +150,7 @@ function addItemsToList(){
     tempID = createAListItem(document.querySelector('#list'), inputField.value, false);
     //Send the data to the db 
     updateDB(inputField.value, 0, tempID, tempID)
-
+    document.getElementById(tempID).addEventListener('click', handleCheckBoxes, true)
     inputField.value = '';
      
 }
@@ -111,8 +160,9 @@ function loadData(data){
     if(!data){ return; }
     const list = document.querySelector('#list'); 
     data.forEach((element) => {
-        console.log(`Appending ${element.Name}`); 
-        createAListItem(list, `${element.Name}`, element.Status, element.itemID)
+        // Take note that I had to convert the Status to a number, this is likely because data is being recieved as a string
+        // But the createAListItem call requires a number for the status
+        createAListItem(list, `${element.Name}`, Number(element.Status), element.itemID)
     });
     addEventListeners()
 }

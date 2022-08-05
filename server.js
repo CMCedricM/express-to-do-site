@@ -77,6 +77,7 @@ class mySite{
         this.addDataTodo = this.addDataTodo.bind(this);
         this.getToDoList = this.getToDoList.bind(this);
         this.updateStatus = this.updateStatus.bind(this); 
+        this.removeData = this.removeData.bind(this);
 
         // Check for auth 
         this.authenticated = false; 
@@ -231,7 +232,14 @@ class mySite{
         const user = req.session.userId; 
         // Lets Get the New Items Here
         const {newItems} = req.body
-        if(newItems.itemID == null){newItems.itemID = uuid.v4(); }
+        newItems.itemID = uuid.v4(); 
+        //console.log(newItems.Status == 0)
+        if(newItems.Status != 0 && newItems.Status != 1){
+            this.logEvent("ALERT: Code Integrity"); 
+            res.status(403).json({'info' : "Permission Denied ==> Client JS script error!", 
+                                    'site' : '/logout'}) ;
+            return;
+        }
         // Connect the Database
         const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
         try{
@@ -241,7 +249,7 @@ class mySite{
             const data = await userData.findOne({'userID' : (user.toLowerCase())}); 
             // Check if the user has any data attached to them 
             if(!data){
-                this.logEvent("Data Inserted")
+                //this.logEvent("Data Inserted")
                 await userData.insertOne({'userID' : (user.toLowerCase()), 'toDoListData' : [] }); 
             }
             userData.updateOne({'userID' : (user.toLowerCase())}, {$push: {'toDoListData' : newItems }}, (err, res) => {
@@ -268,7 +276,7 @@ class mySite{
         const {info} = req.body; 
         const itemID = info.itemID;
         const Status = info.Status;
-        this.logEvent(`ID: ${info.itemID}, Status: ${info.Status}`);
+        //this.logEvent(`ID: ${info.itemID}, Status: ${info.Status}`);
         /*
         const {itemID, Name, Status} = req.body; 
         this.logEvent(`ID: ${itemID}, Name: ${Name}, Status: ${Status}`)
@@ -302,6 +310,37 @@ class mySite{
         
     }
     
+    async removeData(req,res){
+        if(!req.body || !req.session.userId){res.status(418).send("No Data Recieved"); }
+        const {items} = req.body, 
+        user = req.session.userId; 
+        /*this.logEvent(`itemID: ${JSON.parse(items[0]).itemID}`)
+        console.log('A Delete Request was recieved')*/
+
+        
+        // Connect the Database
+        const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
+        try{
+            await client.connect(); 
+            const db = client.db(userDbName); 
+            const userData = db.collection(toDoListCollection); 
+            const data = await userData.findOne({'userID' : (user.toLowerCase())}); 
+            
+            if(data){ 
+                for(let i = 0; i < items.length; i++){
+                    const itemID = JSON.parse(items[i]).itemID
+                    userData.updateOne({userID : user.toLowerCase()}, {$pull : {'toDoListData' : {'itemID' : `${itemID}`}}}, (err,res) =>{
+                        if(err)this.logEvent(`Error in updating: ===> ${err}`); 
+                    });
+                }
+                
+            }
+            
+            
+        }catch(err){
+            this.logEvent(`Unable to Remove Data From Database! ==> ${err}`)
+        }
+    }
 
     runtime = () => {
         
@@ -318,6 +357,7 @@ class mySite{
         this.server.get('/userData', this.getToDoList); 
         this.server.post('/userData', this.addDataTodo)
         this.server.post('/updateStatus', this.updateStatus)
+        this.server.post('/removeData', this.removeData)
         // Logout Routes
         this.server.get('/logout', (req,res) => { req.session.destroy(); res.redirect('/login'); });
         
