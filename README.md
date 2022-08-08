@@ -6,3 +6,6 @@ This web app uses a local mongoDB instance to hold users and their data.
 Images
 ============
 <img src="screenshots/signup-screen.png">
+<br><br> 
+<img src="screenshots/login-screen.png">
+
