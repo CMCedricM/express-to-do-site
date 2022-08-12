@@ -1,10 +1,13 @@
+
+
 const xhr = new XMLHttpRequest()
 
 document.getElementById('add-data').addEventListener('click', addItemsToList);
 document.getElementById('remove-data').addEventListener('click', removeData); 
 
 // For now lets just assume we want to delete all completed items, not individual ones yet, we can add that later
-function removeData(){
+function removeData(e){
+    e.preventDefault();
     const data = document.getElementsByClassName('list-element-span');
     let buffer = {items: [] }; 
     // Lets find all completed items and then delete them and mark their remove attribute to true
@@ -32,7 +35,6 @@ function removeData(){
 // This will update the data in the db
 function removeFromDB(buffer){
     if(buffer.items.length == 0) { return; }
-    console.log("Data: " + buffer.items);
     xhr.open('POST', '/removeData', true ); 
     xhr.onload = () => {
         if(xhr.status == 418){ console.log("Well something doesn't Work Right, try again later!")}
@@ -73,7 +75,7 @@ function updateDB(itemName, status, id, tempId = null){
     let data = 
     {
         newItems: {
-            itemID : `${itemidenti}`, 
+            ItemID : `${itemidenti}`, 
             Name : `${itemName}`, 
             Status : `${status}`, 
             Remove: false
@@ -155,7 +157,7 @@ function loadData(data){
     data.forEach((element) => {
         // Take note that I had to convert the Status to a number, this is likely because data is being recieved as a string
         // But the createAListItem call requires a number for the status
-        createAListItem(list, `${element.Name}`, Number(element.Status), element.itemID)
+        createAListItem(list, `${element.Name}`, Number(element.Status), element.ItemID)
     });
     addEventListeners()
 }
