@@ -16,6 +16,12 @@ const dateTime = require('node-datetime');
 const https = require('https'); 
 
 
+// Firebase 
+const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = require('firebase/auth');
+const { collection, query, where, doc, getDoc, getDocs, setDoc } = require('firebase/firestore');
+const { auth, dbRef } = require('./firebase.config.js')
+
+
 // Environment 
 const TWO_HRS = 1000 * 60 * 60; 
 
@@ -126,37 +132,24 @@ class mySite{
     }
 
     async login(req, res){
-
-        // Get User Info
         if(!req){this.logEvent("Login Function Failure!"); try{res.send("Internal Server Error, please try again later...")}catch(err){this.logEvent(`${err}`)}; return;}
-        const {email, password} = req.body; 
-        try{
-            const user = await this.userRecords.findOne({email : email.toLowerCase()}); 
-         
-            if(user){
-                const valid = await bcrypt.compare(password, user.password); 
-                if(valid){
-                    req.session.userId = {'user': user.firstname,  'uuid' : user.uniqueID};
-                    this.logEvent("SUCCESSFUL login Attempt!");
-                    //console.log(`${logDateTime} ----> SUCCESSFUL login Attempt!`)
-                    res.send('/dashboard'); 
-                }
-                else{
-                    this.logEvent("FAILED login Attempt! => Invalid Credentials");
-                    //console.log(`${logDateTime} ----> FAILED login Attempt! => Invalid Credentials`)
-                    res.status(401).send('Email or Password Incorrect'); 
-                }
-            }
-            else{
-                this.logEvent("FAILED login Attempt => No Account");
-                //console.log(`${logDateTime} ----> FAILED login Attempt => No Account`)
-                res.status(401).send('No Account Found, Please Create One First');
-            }
-        }
+        const { email, password } = req.body;
+        let aUser = '';
+        try{ aUser = await signInWithEmailAndPassword(auth, email, password); }
         catch(err){
-            this.logEvent(`System Error => ${err}\n\n`);
+            if(err.code == 'auth/user-not-found'){ res.status(401).send('No Account Found, Please Create One First'); }
+            else if(err.code == 'auth/wrong-password'){ res.status(401).send('Email or Password Incorrect'); }
+            this.logEvent(`Login Failure ==> ${err.code}`);
+            return; 
         }
-        
+        // We Will Need to Query for the Accompanying user's name 
+        let userName = '';
+        const getUser = await getDoc(doc(dbRef, 'users', aUser.user.uid)); 
+        if(getUser.exists()){ userName = (getUser.data()).firstname; }else{ userName = ''; }
+        // Now Set the Session Info
+        req.session.userId = {'user' : userName, 'uid' : aUser.user.uid, 'email' : email, 'password' : password };
+        this.logEvent(`User Logged in ==> ${req.session.userId.user }`);
+        res.send('/dashboard');
     }
 
 
@@ -168,40 +161,61 @@ class mySite{
             email: (req.body.email).toLowerCase(),
             password: await bcrypt.hash(req.body.password, 10)
         }
+     
         return user;
     }
 
-
     async signup(req, res){
-        if(!req){this.logEvent("Signup Function Failure!"); try{res.send("Internal Server Error, please try again later...")}catch(err){this.logEvent(`${err}`)}; return;}
-        // Just Cause, set the req.session.userid to non 
+        if(!req){this.logEvent("Signup Function Failure!"); try{res.send("Internal Server Error, please try again later...")}catch(err){this.logEvent(`${err}`)}; return; }
         req.session.destroy();
-        const user = await this.createUser(req); 
-        const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
-        try{
-            await client.connect(); 
-            const db = client.db(userDbName);
-            const users = db.collection(userDbCollection); 
-            const checkAUser = await users.findOne({email : (req.body.email).toLowerCase()});
-            // Check if user already exists
-            if(checkAUser){ this.logEvent("Duplicate User Creation Attempted!"); res.status(401).send('User Already Exists!'); }
-            else{
-                await users.insertOne(user); 
-                this.logEvent("User Created");
-                //console.log('User Created');
-                res.send('/login'); 
-            }
-        }
+
+        try{ await createUserWithEmailAndPassword(auth, req.body.email, req.body.password)}
         catch(err){
-            this.logEvent(`${err}`);
+            this.logEvent(`Signup Error ===> ${err.code}`); 
+            if(err.code == 'auth/email-already-in-use'){ res.status(500).send('User With That Email Exists, Please Login Instead'); }
+            else{ res.status(500).send("Interal Server Error, try again later.")}
+            return; 
         }
-        finally{
-            client.close(); 
+        
+        // Create A Document For This User
+        let userInfo = {
+            uuid : auth.currentUser.uid, 
+            firstname : req.body.firstname.toLowerCase(), 
+            lastname : req.body.lastname.toLowerCase()
         }
+        try{ await setDoc(doc(dbRef, 'users', userInfo.uuid), userInfo); }catch(err){ this.logEvent(err); return; }
+        res.send('/login');
+
     }
 
 
     async getToDoList(req, res){
+        if(!req.session.userId){ res.redirect('/login'); }
+        const user = req.session.userId; 
+        let data = []; 
+
+        const {email, password, uid } = req.session.userId; 
+        try{
+            await signInWithEmailAndPassword(auth, email, password); 
+        }catch(err){ return; }
+
+        try{
+            const userDataRef = collection(dbRef, 'userData')
+            const getToDoItems = await getDocs(query(userDataRef, where('userID', '==', uid)));//, where('userID', '==', uid))); 
+            getToDoItems.forEach((docume) => {data.push(docume.id);} )
+            console.log("here")
+            const items = collection(dbRef, 'userData', data[0], 'toDoData'); 
+            const itemLogs = await getDocs(items); 
+            // Here is Where I eneded on Aug 12 at 4:10 am
+            itemLogs.forEach((items) => {console.log(items.data().Name)})
+            
+           
+        }catch(err){ console.log(err); return; }
+
+        this.logEvent(`Data ==> ${data}`);
+    }
+
+    async getToDoList2(req, res){
         if(!req.session.userId){ res.redirect('/login'); }
         const user = req.session.userId; 
         let data = {}; 
