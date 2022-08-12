@@ -7,18 +7,13 @@ const path = require('path');
 
 // Additional Libraries
 const bcrypt = require('bcryptjs');
-const fs = require('fs');
 const uuid = require('uuid')
-const {MongoClient} = require('mongodb');
 const dateTime = require('node-datetime');
-
-// For https
-const https = require('https'); 
 
 
 // Firebase 
 const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = require('firebase/auth');
-const { collection, query, where, doc, getDoc, getDocs, setDoc, runTransaction, updateDoc } = require('firebase/firestore');
+const { collection, query, where, doc, getDoc, getDocs, setDoc, runTransaction, updateDoc, deleteDoc, writeBatch } = require('firebase/firestore');
 const { auth, dbRef } = require('./firebase.config.js')
 
 
@@ -30,14 +25,6 @@ const {
     SESS_SECRET = "place-a-secret-key-here-lool",
     NODE_ENV = 'development', 
     SESS_NAME = 'sid',
-
-    //CERTS
-    // certFile = fs.readFileSync(path.join(__dirname, 'certs','certificate.pem')),
-    // keyFile = fs.readFileSync(path.join(__dirname, 'certs','key.pem')),
-    /*httpsOptions = {
-        cert: certFile,
-        key: keyFile
-    }*/
 } = process.env 
 
 
@@ -47,13 +34,6 @@ const staticFolder = path.join(__dirname, 'static'); // /Users/home-dir/{dir}/no
 const dynamicPagesFolder = path.join(__dirname, 'views'); // /Users/home-dir/{dir}/node-project/views
 
 
-// Database Connection Info 
-let db = JSON.parse(fs.readFileSync(path.join(__dirname, 'db.json'), 'utf8')); // /Users/cedric-men/{dir}/node-project/db.json 
-const dbURL = `mongodb://${db.username}:${db.password}@${db.url}`;
-// db sources
-const userDbName = "home-users"; 
-const userDbCollection = "users";
-const toDoListCollection = "toDoData"
 
 class mySite{
     constructor(){
@@ -70,12 +50,6 @@ class mySite{
         this.server.engine('html', htmlRender); 
         this.server.set('views', dynamicPagesFolder); 
         this.server.set('view engine', 'html'); 
-
-        // Set Database Connection
-        this.CLIENT = new MongoClient(dbURL, {useNewUrlParser: true}); 
-        this.db = this.linkDB(); 
-        this.userRecords = this.linkUserDB();
-        this.userData = this.linkToDoDB(); 
 
         // Bind Function to Class
         //this.runtime = this.runtime.bind(this); <--- Example of binding
@@ -115,21 +89,6 @@ class mySite{
         console.log(`${this.getTime()} ----> ${text}`)
     }
 
-    linkDB(){
-        this.CLIENT.connect(); 
-        return this.CLIENT.db(userDbName); 
-          
-    }
-
-    linkUserDB(){
-        const userRecords = this.db.collection(userDbCollection); 
-        return userRecords; 
-    }
-
-    linkToDoDB(){ 
-        const userData = this.db.collection(toDoListCollection); 
-        return userData
-    }
 
     async login(req, res){
         if(!req){this.logEvent("Login Function Failure!"); try{res.send("Internal Server Error, please try again later...")}catch(err){this.logEvent(`${err}`)}; return;}
@@ -165,6 +124,7 @@ class mySite{
         return user;
     }
 
+
     async signup(req, res){
         if(!req){this.logEvent("Signup Function Failure!"); try{res.send("Internal Server Error, please try again later...")}catch(err){this.logEvent(`${err}`)}; return; }
         req.session.destroy();
@@ -179,11 +139,17 @@ class mySite{
         
         // Create A Document For This User
         let userInfo = {
-            uuid : auth.currentUser.uid, 
+            userID : auth.currentUser.uid, 
             firstname : req.body.firstname.toLowerCase(), 
             lastname : req.body.lastname.toLowerCase()
         }
-        try{ await setDoc(doc(dbRef, 'users', userInfo.uuid), userInfo); }catch(err){ this.logEvent(err); return; }
+        try{ 
+            // Create user info
+            await setDoc(doc(dbRef, 'users', userInfo.userID), userInfo); 
+            // Create user data
+            await(setDoc(doc(dbRef, 'userData', userInfo.userID), userInfo)); 
+        }catch(err){ this.logEvent(err); return; }
+        
         res.send('/login');
 
     }
@@ -193,7 +159,7 @@ class mySite{
         if(!req.session.userId){ res.redirect('/login'); }
         //const user = req.session.userId; 
         let data = {}; 
-        let toDoData = []; 
+        let userDocs = []; 
 
         const {user, email, password, uid, docIDs} = req.session.userId; 
         try{
@@ -205,40 +171,38 @@ class mySite{
             const userDataRef = collection(dbRef, 'userData')
             const getToDoItems = await getDocs(query(userDataRef, where('userID', '==', uid)));
             // Iterate and Save the document ids that belong to the user
-            getToDoItems.forEach((docume) => {toDoData.push(docume.id);} )
-            console.log("here")
+            getToDoItems.forEach((docume) => {userDocs.push(docume.id);} )
             // Get the SubCollection now that we have the document ids that belong to the user
-            const items = collection(dbRef, 'userData', toDoData[0], 'toDoData'); 
+            let userDocID = ''; 
+            if(userDocs.length == 0){ userDocID = uid }else{ userDocID = userDocs[0] }
+            const items = collection(dbRef, 'userData', userDocID, 'toDoData'); 
             const itemLogs = await getDocs(items); 
             // Here is Where I eneded on Aug 12 at 4:10 am
             // Little Trick Here To Save The Docment ID, so that we can update satus without querying for the doc id
-            toDoData.forEach(id => { docIDs.push(id); })
+            userDocs.forEach(id => { docIDs.push(id); })
             // Clear the Array 
-            toDoData = []; 
+            userDocs = []; 
             // When using items.data() we will get a json of { ItemID: '',  Name: '', Remove: '', Status: '' }
-            itemLogs.forEach((items) => { console.log(items.data().Name); toDoData.push(items.data()); }) 
+            itemLogs.forEach((items) => { userDocs.push(items.data()); }) 
             
            
-        }catch(err){ console.log(err); return; }
+        }catch(err){ this.logEvent(err); return; }
 
         data = {
             userID: user,
-            toDoListData: toDoData
+            toDoListData: userDocs
         }
-        this.logEvent(data.userID);
-
+        
         res.json(data);
     }
 
     
-
-
     async addDataTodo(req, res){
         if(!req.session.userId) res.redirect('/login'); 
-        const user = req.session.userId; 
+        const {email, password, docIDs, uid } = req.session.userId; 
         // Lets Get the New Items Here
         const {newItems} = req.body
-        newItems.itemID = uuid.v4(); 
+        newItems.ItemID = uuid.v4(); 
         //console.log(newItems.Status == 0)
         if(newItems.Status != 0 && newItems.Status != 1){
             this.logEvent("ALERT: Code Integrity"); 
@@ -246,31 +210,22 @@ class mySite{
                                     'site' : '/logout'}) ;
             return;
         }
-       
-        try{
-            const data = await this.userData.findOne({'userID' : (user.uuid)}); 
-            // Check if the user has any data attached to them 
-            if(!data){
-                await this.userData.insertOne({'userID' : (user.uuid), 'toDoListData' : [] }); 
-            }
-            this.userData.updateOne({'userID' : (user.uuid)}, {$push: {'toDoListData' : newItems }}, (err, res) => {
-                if(err) this.logEvent(`There was an error appending the data ==> ${err}`); 
-            })
-        
-        }catch(err){
-            this.logEvent(`Unable to Add Data to This User! => ${err}`)
-            res.send("Unable to Add Item"); 
-        }
-        this.logEvent("Item Was Added Successfully to this user!"); 
-        res.send(newItems.itemID); 
-        
 
+        //try{ await signInWithEmailAndPassword(auth, email, password); }
+        //catch(err){ this.logEvent(` addDataToDo() Error ===>${err.code}`); res.status(500).send("Internal Server Error, Try Again Later"); return; }
+        let userDocID = '';
+        if(docIDs.length == 0){userDocID = uid; }else{userDocID = docIDs[0]; }
+        try{ await setDoc(doc(dbRef, 'userData', userDocID, 'toDoData', newItems.ItemID), newItems); }catch(err){ this.logEvent(err); return; }
+        res.send(newItems.ItemID);
+        this.logEvent("New Item Created!")
+        
     }
 
+    
    async updateStatus(req, res){
         if(!req.session.userId){ return; }
         
-        const { email, password, docIDs } = req.session.userId,
+        const { email, password, docIDs, uid } = req.session.userId,
         {info} = req.body; 
         const ItemID = info.itemID, 
         Status = info.Status;
@@ -279,38 +234,33 @@ class mySite{
         catch(err){ this.logEvent(`Status Update Error ${err.code}`); res.status(500).send('Internal Server Error, Try Again Later'); }
         
         // Query for Subcollection document that matches the id of to-do-item to update 
-        getDocs(query(collection(dbRef, 'userData', docIDs[0], 'toDoData'), where('ItemID', '==', ItemID))).
+        let userDocID = ''; 
+        if(docIDs.length == 0){ userDocID = uid; }else{ userDocID = docIDs[0]; }
+        getDocs(query(collection(dbRef, 'userData', userDocID, 'toDoData'), where('ItemID', '==', ItemID))).
         then((docs) => { if(docs) { docs.docs.forEach(async (info) => { await updateDoc(info.ref, {Status: Status })}); }
-                                else{ console.log("No Data") }}).
+                                else{ this.logEvent("No Data") }}).
         catch( (err) => { this.logEvent(`There Was An Error Updating the Document ==> ${err}`)}); 
         
    }
 
 
-   
-    
-    async removeData(req,res){
+   async removeData(req, res){
         if(!req.body || !req.session.userId){res.status(418).send("No Data Recieved"); }
         const {items} = req.body, 
-        user = req.session.userId; 
-        /*this.logEvent(`itemID: ${JSON.parse(items[0]).itemID}`)
-        console.log('A Delete Request was recieved')*/
-        try{
-            const data = await this.userData.findOne({'userID' : user.uuid});  
-            if(data){ 
-                for(let i = 0; i < items.length; i++){
-                    const itemID = JSON.parse(items[i]).itemID
-                    this.userData.updateOne({userID : user.uuid}, {$pull : {'toDoListData' : {'itemID' : `${itemID}`}}}, (err,res) =>{
-                        if(err)this.logEvent(`Error in updating: ===> ${err}`); 
-                        else{console.log("Done")}
-                    });
-                }    
-            }
-               
-        }catch(err){
-            this.logEvent(`Unable to Remove Data From Database! ==> ${err}`)
-        }
-    }
+        {uid, docIDs } = req.session.userId; 
+        let userDocID = ''; 
+        if(docIDs.length == 0){ userDocID = uid; }else{ userDocID = docIDs[0]; }
+        
+        const batch = writeBatch(dbRef);
+        
+        for(const data of items ){
+            batch.delete(doc(dbRef, 'userData', userDocID, 'toDoData', JSON.parse(data).itemID))
+        }      
+        try{ await batch.commit(); }
+        catch(err){ this.logEvent(`Batch Commit Error ===> ${err}`); }
+   }
+   
+
 
     runtime = () => {
         
