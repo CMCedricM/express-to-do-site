@@ -293,4 +293,4 @@ class mySite{
 app = new mySite(); 
 app.runtime();
 
-module.exports = app;
+module.exports = app.runtime();
