@@ -18,7 +18,7 @@ const https = require('https');
 
 // Firebase 
 const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = require('firebase/auth');
-const { collection, query, where, doc, getDoc, getDocs, setDoc } = require('firebase/firestore');
+const { collection, query, where, doc, getDoc, getDocs, setDoc, runTransaction, updateDoc } = require('firebase/firestore');
 const { auth, dbRef } = require('./firebase.config.js')
 
 
@@ -147,8 +147,8 @@ class mySite{
         const getUser = await getDoc(doc(dbRef, 'users', aUser.user.uid)); 
         if(getUser.exists()){ userName = (getUser.data()).firstname; }else{ userName = ''; }
         // Now Set the Session Info
-        req.session.userId = {'user' : userName, 'uid' : aUser.user.uid, 'email' : email, 'password' : password };
-        this.logEvent(`User Logged in ==> ${req.session.userId.user }`);
+        req.session.userId = {'user' : userName, 'uid' : aUser.user.uid, 'email' : email, 'password' : password, 'docIDs' : [] };
+        this.logEvent(`User Logged in`);
         res.send('/dashboard');
     }
 
@@ -191,59 +191,46 @@ class mySite{
 
     async getToDoList(req, res){
         if(!req.session.userId){ res.redirect('/login'); }
-        const user = req.session.userId; 
-        let data = []; 
+        //const user = req.session.userId; 
+        let data = {}; 
+        let toDoData = []; 
 
-        const {email, password, uid } = req.session.userId; 
+        const {user, email, password, uid, docIDs} = req.session.userId; 
         try{
             await signInWithEmailAndPassword(auth, email, password); 
         }catch(err){ return; }
 
         try{
+            // First Get the Documents Of the Curent User
             const userDataRef = collection(dbRef, 'userData')
-            const getToDoItems = await getDocs(query(userDataRef, where('userID', '==', uid)));//, where('userID', '==', uid))); 
-            getToDoItems.forEach((docume) => {data.push(docume.id);} )
+            const getToDoItems = await getDocs(query(userDataRef, where('userID', '==', uid)));
+            // Iterate and Save the document ids that belong to the user
+            getToDoItems.forEach((docume) => {toDoData.push(docume.id);} )
             console.log("here")
-            const items = collection(dbRef, 'userData', data[0], 'toDoData'); 
+            // Get the SubCollection now that we have the document ids that belong to the user
+            const items = collection(dbRef, 'userData', toDoData[0], 'toDoData'); 
             const itemLogs = await getDocs(items); 
             // Here is Where I eneded on Aug 12 at 4:10 am
-            itemLogs.forEach((items) => {console.log(items.data().Name)})
+            // Little Trick Here To Save The Docment ID, so that we can update satus without querying for the doc id
+            toDoData.forEach(id => { docIDs.push(id); })
+            // Clear the Array 
+            toDoData = []; 
+            // When using items.data() we will get a json of { ItemID: '',  Name: '', Remove: '', Status: '' }
+            itemLogs.forEach((items) => { console.log(items.data().Name); toDoData.push(items.data()); }) 
             
            
         }catch(err){ console.log(err); return; }
 
-        this.logEvent(`Data ==> ${data}`);
-    }
-
-    async getToDoList2(req, res){
-        if(!req.session.userId){ res.redirect('/login'); }
-        const user = req.session.userId; 
-        let data = {}; 
-
-        try{
-            const userRecords = await this.userData.findOne({'userID' : (user.uuid)}); 
-            // Check if the user has any data attached to them 
-            if(!userRecords){
-                await this.userData.insertOne({'userID' : (user.uuid), 'toDoListData' : [] }); 
-                data = {
-                    userID: user.user
-                }
-            }else{
-                data = {
-                    userID: user.user,
-                    toDoListData : userRecords.toDoListData
-                }
-                //data = userRecords
-            }
-        
-        }catch(err){
-            this.logEvent(`Unable to Retrieve Data to This User! => ${err}`)
-            res.status(500).send("Unable to Add Item"); 
+        data = {
+            userID: user,
+            toDoListData: toDoData
         }
+        this.logEvent(data.userID);
 
-        res.status(200).json(data);
-
+        res.json(data);
     }
+
+    
 
 
     async addDataTodo(req, res){
@@ -280,42 +267,27 @@ class mySite{
 
     }
 
-   
-    // This will take the recieved id and compare it with all uuids in the toDoData and update the status of
-    // whether it was complete or not. 
-    // Problem: The server and the client side will have different ids if an item was added but the page was not reloaded
-    // Problem -> Solved
-    async updateStatus(req,res){    
+   async updateStatus(req, res){
         if(!req.session.userId){ return; }
-        const user = req.session.userId; 
-        const {info} = req.body; 
-        const itemID = info.itemID;
-        const Status = info.Status;
-        //this.logEvent(`ID: ${info.itemID}, Status: ${info.Status}`);
-        /*
-        const {itemID, Name, Status} = req.body; 
-        this.logEvent(`ID: ${itemID}, Name: ${Name}, Status: ${Status}`)
-        */
-        try{
-            console.log(user.uuid);
-            const data = await this.userData.findOne({'userID' : (user.uuid)}); 
-            if(data){
-                this.userData.updateOne({userID : user.uuid}, {$set : {"toDoListData.$[updateItem].Status" : Status} }, 
-                {'arrayFilters' : 
-                    [
-                        {"updateItem.itemID" : itemID}
-                    ]
-                }, (err,res) => {
-                    if(err) this.logEvent(`Error Updating Status of element ${itemID} ==> ${err}`);
-                })
-            }
-        }catch(err){
-            this.logEvent(`Unable to Add Data to This User! => ${err}`)
-            res.send("Unable to Add Item"); 
-        }
-
         
-    }
+        const { email, password, docIDs } = req.session.userId,
+        {info} = req.body; 
+        const ItemID = info.itemID, 
+        Status = info.Status;
+
+        try{ await signInWithEmailAndPassword(auth, email, password); }
+        catch(err){ this.logEvent(`Status Update Error ${err.code}`); res.status(500).send('Internal Server Error, Try Again Later'); }
+        
+        // Query for Subcollection document that matches the id of to-do-item to update 
+        getDocs(query(collection(dbRef, 'userData', docIDs[0], 'toDoData'), where('ItemID', '==', ItemID))).
+        then((docs) => { if(docs) { docs.docs.forEach(async (info) => { await updateDoc(info.ref, {Status: Status })}); }
+                                else{ console.log("No Data") }}).
+        catch( (err) => { this.logEvent(`There Was An Error Updating the Document ==> ${err}`)}); 
+        
+   }
+
+
+   
     
     async removeData(req,res){
         if(!req.body || !req.session.userId){res.status(418).send("No Data Recieved"); }

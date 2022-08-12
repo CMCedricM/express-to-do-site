@@ -73,7 +73,7 @@ function updateDB(itemName, status, id, tempId = null){
     let data = 
     {
         newItems: {
-            itemID : `${itemidenti}`, 
+            ItemID : `${itemidenti}`, 
             Name : `${itemName}`, 
             Status : `${status}`, 
             Remove: false
@@ -155,7 +155,7 @@ function loadData(data){
     data.forEach((element) => {
         // Take note that I had to convert the Status to a number, this is likely because data is being recieved as a string
         // But the createAListItem call requires a number for the status
-        createAListItem(list, `${element.Name}`, Number(element.Status), element.itemID)
+        createAListItem(list, `${element.Name}`, Number(element.Status), element.ItemID)
     });
     addEventListeners()
 }
