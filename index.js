@@ -7,14 +7,13 @@ const path = require('path');
 
 // Additional Libraries
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
 const uuid = require('uuid')
+const {MongoClient} = require('mongodb');
 const dateTime = require('node-datetime');
 
-
-// Firebase 
-const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = require('firebase/auth');
-const { collection, query, where, doc, getDoc, getDocs, setDoc, runTransaction, updateDoc, deleteDoc, writeBatch } = require('firebase/firestore');
-const { auth, dbRef } = require('./firebase.config.js')
+// For https
+const https = require('https'); 
 
 
 // Environment 
@@ -25,6 +24,14 @@ const {
     SESS_SECRET = "place-a-secret-key-here-lool",
     NODE_ENV = 'development', 
     SESS_NAME = 'sid',
+
+    //CERTS
+    // certFile = fs.readFileSync(path.join(__dirname, 'certs','certificate.pem')),
+    // keyFile = fs.readFileSync(path.join(__dirname, 'certs','key.pem')),
+    /*httpsOptions = {
+        cert: certFile,
+        key: keyFile
+    }*/
 } = process.env 
 
 
@@ -34,6 +41,13 @@ const staticFolder = path.join(__dirname, 'static'); // /Users/home-dir/{dir}/no
 const dynamicPagesFolder = path.join(__dirname, 'views'); // /Users/home-dir/{dir}/node-project/views
 
 
+// Database Connection Info 
+let db = JSON.parse(fs.readFileSync(path.join(__dirname, 'db.json'), 'utf8')); // /Users/cedric-men/{dir}/node-project/db.json 
+const dbURL = `mongodb://${db.username}:${db.password}@${db.url}`;
+// db sources
+const userDbName = "home-users"; 
+const userDbCollection = "users";
+const toDoListCollection = "toDoData"
 
 class mySite{
     constructor(){
@@ -50,6 +64,12 @@ class mySite{
         this.server.engine('html', htmlRender); 
         this.server.set('views', dynamicPagesFolder); 
         this.server.set('view engine', 'html'); 
+
+        // Set Database Connection
+        this.CLIENT = new MongoClient(dbURL, {useNewUrlParser: true}); 
+        this.db = this.linkDB(); 
+        this.userRecords = this.linkUserDB();
+        this.userData = this.linkToDoDB(); 
 
         // Bind Function to Class
         //this.runtime = this.runtime.bind(this); <--- Example of binding
@@ -89,26 +109,54 @@ class mySite{
         console.log(`${this.getTime()} ----> ${text}`)
     }
 
+    linkDB(){
+        this.CLIENT.connect(); 
+        return this.CLIENT.db(userDbName); 
+          
+    }
+
+    linkUserDB(){
+        const userRecords = this.db.collection(userDbCollection); 
+        return userRecords; 
+    }
+
+    linkToDoDB(){ 
+        const userData = this.db.collection(toDoListCollection); 
+        return userData
+    }
 
     async login(req, res){
+
+        // Get User Info
         if(!req){this.logEvent("Login Function Failure!"); try{res.send("Internal Server Error, please try again later...")}catch(err){this.logEvent(`${err}`)}; return;}
-        const { email, password } = req.body;
-        let aUser = '';
-        try{ aUser = await signInWithEmailAndPassword(auth, email, password); }
-        catch(err){
-            if(err.code == 'auth/user-not-found'){ res.status(401).send('No Account Found, Please Create One First'); }
-            else if(err.code == 'auth/wrong-password'){ res.status(401).send('Email or Password Incorrect'); }
-            this.logEvent(`Login Failure ==> ${err.code}`);
-            return; 
+        const {email, password} = req.body; 
+        try{
+            const user = await this.userRecords.findOne({email : email.toLowerCase()}); 
+         
+            if(user){
+                const valid = await bcrypt.compare(password, user.password); 
+                if(valid){
+                    req.session.userId = {'user': user.firstname,  'uuid' : user.uniqueID};
+                    this.logEvent("SUCCESSFUL login Attempt!");
+                    //console.log(`${logDateTime} ----> SUCCESSFUL login Attempt!`)
+                    res.send('/dashboard'); 
+                }
+                else{
+                    this.logEvent("FAILED login Attempt! => Invalid Credentials");
+                    //console.log(`${logDateTime} ----> FAILED login Attempt! => Invalid Credentials`)
+                    res.status(401).send('Email or Password Incorrect'); 
+                }
+            }
+            else{
+                this.logEvent("FAILED login Attempt => No Account");
+                //console.log(`${logDateTime} ----> FAILED login Attempt => No Account`)
+                res.status(401).send('No Account Found, Please Create One First');
+            }
         }
-        // We Will Need to Query for the Accompanying user's name 
-        let userName = '';
-        const getUser = await getDoc(doc(dbRef, 'users', aUser.user.uid)); 
-        if(getUser.exists()){ userName = (getUser.data()).firstname; }else{ userName = ''; }
-        // Now Set the Session Info
-        req.session.userId = {'user' : userName, 'uid' : aUser.user.uid, 'email' : email, 'password' : password, 'docIDs' : [] };
-        this.logEvent(`User Logged in`);
-        res.send('/dashboard');
+        catch(err){
+            this.logEvent(`System Error => ${err}\n\n`);
+        }
+        
     }
 
 
@@ -120,89 +168,76 @@ class mySite{
             email: (req.body.email).toLowerCase(),
             password: await bcrypt.hash(req.body.password, 10)
         }
-     
         return user;
     }
 
 
     async signup(req, res){
-        if(!req){this.logEvent("Signup Function Failure!"); try{res.send("Internal Server Error, please try again later...")}catch(err){this.logEvent(`${err}`)}; return; }
+        if(!req){this.logEvent("Signup Function Failure!"); try{res.send("Internal Server Error, please try again later...")}catch(err){this.logEvent(`${err}`)}; return;}
+        // Just Cause, set the req.session.userid to non 
         req.session.destroy();
-
-        try{ await createUserWithEmailAndPassword(auth, req.body.email, req.body.password)}
+        const user = await this.createUser(req); 
+        const client = new MongoClient(dbURL, {useNewUrlParser: true}); 
+        try{
+            await client.connect(); 
+            const db = client.db(userDbName);
+            const users = db.collection(userDbCollection); 
+            const checkAUser = await users.findOne({email : (req.body.email).toLowerCase()});
+            // Check if user already exists
+            if(checkAUser){ this.logEvent("Duplicate User Creation Attempted!"); res.status(401).send('User Already Exists!'); }
+            else{
+                await users.insertOne(user); 
+                this.logEvent("User Created");
+                //console.log('User Created');
+                res.send('/login'); 
+            }
+        }
         catch(err){
-            this.logEvent(`Signup Error ===> ${err.code}`); 
-            if(err.code == 'auth/email-already-in-use'){ res.status(500).send('User With That Email Exists, Please Login Instead'); }
-            else{ res.status(500).send("Interal Server Error, try again later.")}
-            return; 
+            this.logEvent(`${err}`);
         }
-        
-        // Create A Document For This User
-        let userInfo = {
-            userID : auth.currentUser.uid, 
-            firstname : req.body.firstname.toLowerCase(), 
-            lastname : req.body.lastname.toLowerCase()
+        finally{
+            client.close(); 
         }
-        try{ 
-            // Create user info
-            await setDoc(doc(dbRef, 'users', userInfo.userID), userInfo); 
-            // Create user data
-            await(setDoc(doc(dbRef, 'userData', userInfo.userID), userInfo)); 
-        }catch(err){ this.logEvent(err); return; }
-        
-        res.send('/login');
-
     }
 
 
     async getToDoList(req, res){
         if(!req.session.userId){ res.redirect('/login'); }
-        //const user = req.session.userId; 
+        const user = req.session.userId; 
         let data = {}; 
-        let userDocs = []; 
-
-        const {user, email, password, uid, docIDs} = req.session.userId; 
-        try{
-            await signInWithEmailAndPassword(auth, email, password); 
-        }catch(err){ return; }
 
         try{
-            // First Get the Documents Of the Curent User
-            const userDataRef = collection(dbRef, 'userData')
-            const getToDoItems = await getDocs(query(userDataRef, where('userID', '==', uid)));
-            // Iterate and Save the document ids that belong to the user
-            getToDoItems.forEach((docume) => {userDocs.push(docume.id);} )
-            // Get the SubCollection now that we have the document ids that belong to the user
-            let userDocID = ''; 
-            if(userDocs.length == 0){ userDocID = uid }else{ userDocID = userDocs[0] }
-            const items = collection(dbRef, 'userData', userDocID, 'toDoData'); 
-            const itemLogs = await getDocs(items); 
-            // Here is Where I eneded on Aug 12 at 4:10 am
-            // Little Trick Here To Save The Docment ID, so that we can update satus without querying for the doc id
-            userDocs.forEach(id => { docIDs.push(id); })
-            // Clear the Array 
-            userDocs = []; 
-            // When using items.data() we will get a json of { ItemID: '',  Name: '', Remove: '', Status: '' }
-            itemLogs.forEach((items) => { userDocs.push(items.data()); }) 
-            
-           
-        }catch(err){ this.logEvent(err); return; }
-
-        data = {
-            userID: user,
-            toDoListData: userDocs
-        }
+            const userRecords = await this.userData.findOne({'userID' : (user.uuid)}); 
+            // Check if the user has any data attached to them 
+            if(!userRecords){
+                await this.userData.insertOne({'userID' : (user.uuid), 'toDoListData' : [] }); 
+                data = {
+                    userID: user.user
+                }
+            }else{
+                data = {
+                    userID: user.user,
+                    toDoListData : userRecords.toDoListData
+                }
+                //data = userRecords
+            }
         
-        res.json(data);
+        }catch(err){
+            this.logEvent(`Unable to Retrieve Data to This User! => ${err}`)
+            res.status(500).send("Unable to Add Item"); 
+        }
+
+        res.status(200).json(data);
+
     }
 
-    
+
     async addDataTodo(req, res){
         if(!req.session.userId) res.redirect('/login'); 
-        const {email, password, docIDs, uid } = req.session.userId; 
+        const user = req.session.userId; 
         // Lets Get the New Items Here
         const {newItems} = req.body
-        newItems.ItemID = uuid.v4(); 
+        newItems.itemID = uuid.v4(); 
         //console.log(newItems.Status == 0)
         if(newItems.Status != 0 && newItems.Status != 1){
             this.logEvent("ALERT: Code Integrity"); 
@@ -210,57 +245,86 @@ class mySite{
                                     'site' : '/logout'}) ;
             return;
         }
-
-        //try{ await signInWithEmailAndPassword(auth, email, password); }
-        //catch(err){ this.logEvent(` addDataToDo() Error ===>${err.code}`); res.status(500).send("Internal Server Error, Try Again Later"); return; }
-        let userDocID = '';
-        if(docIDs.length == 0){userDocID = uid; }else{userDocID = docIDs[0]; }
-        try{ await setDoc(doc(dbRef, 'userData', userDocID, 'toDoData', newItems.ItemID), newItems); }catch(err){ this.logEvent(err); return; }
-        res.send(newItems.ItemID);
-        this.logEvent("New Item Created!")
+       
+        try{
+            const data = await this.userData.findOne({'userID' : (user.uuid)}); 
+            // Check if the user has any data attached to them 
+            if(!data){
+                await this.userData.insertOne({'userID' : (user.uuid), 'toDoListData' : [] }); 
+            }
+            this.userData.updateOne({'userID' : (user.uuid)}, {$push: {'toDoListData' : newItems }}, (err, res) => {
+                if(err) this.logEvent(`There was an error appending the data ==> ${err}`); 
+            })
         
+        }catch(err){
+            this.logEvent(`Unable to Add Data to This User! => ${err}`)
+            res.send("Unable to Add Item"); 
+        }
+        this.logEvent("Item Was Added Successfully to this user!"); 
+        res.send(newItems.itemID); 
+        
+
     }
 
-    
-   async updateStatus(req, res){
+   
+    // This will take the recieved id and compare it with all uuids in the toDoData and update the status of
+    // whether it was complete or not. 
+    // Problem: The server and the client side will have different ids if an item was added but the page was not reloaded
+    // Problem -> Solved
+    async updateStatus(req,res){    
         if(!req.session.userId){ return; }
-        
-        const { email, password, docIDs, uid } = req.session.userId,
-        {info} = req.body; 
-        const ItemID = info.itemID, 
-        Status = info.Status;
+        const user = req.session.userId; 
+        const {info} = req.body; 
+        const itemID = info.itemID;
+        const Status = info.Status;
+        //this.logEvent(`ID: ${info.itemID}, Status: ${info.Status}`);
+        /*
+        const {itemID, Name, Status} = req.body; 
+        this.logEvent(`ID: ${itemID}, Name: ${Name}, Status: ${Status}`)
+        */
+        try{
+            console.log(user.uuid);
+            const data = await this.userData.findOne({'userID' : (user.uuid)}); 
+            if(data){
+                this.userData.updateOne({userID : user.uuid}, {$set : {"toDoListData.$[updateItem].Status" : Status} }, 
+                {'arrayFilters' : 
+                    [
+                        {"updateItem.itemID" : itemID}
+                    ]
+                }, (err,res) => {
+                    if(err) this.logEvent(`Error Updating Status of element ${itemID} ==> ${err}`);
+                })
+            }
+        }catch(err){
+            this.logEvent(`Unable to Add Data to This User! => ${err}`)
+            res.send("Unable to Add Item"); 
+        }
 
-        try{ await signInWithEmailAndPassword(auth, email, password); }
-        catch(err){ this.logEvent(`Status Update Error ${err.code}`); res.status(500).send('Internal Server Error, Try Again Later'); }
         
-        // Query for Subcollection document that matches the id of to-do-item to update 
-        let userDocID = ''; 
-        if(docIDs.length == 0){ userDocID = uid; }else{ userDocID = docIDs[0]; }
-        getDocs(query(collection(dbRef, 'userData', userDocID, 'toDoData'), where('ItemID', '==', ItemID))).
-        then((docs) => { if(docs) { docs.docs.forEach(async (info) => { await updateDoc(info.ref, {Status: Status })}); }
-                                else{ this.logEvent("No Data") }}).
-        catch( (err) => { this.logEvent(`There Was An Error Updating the Document ==> ${err}`)}); 
-        
-   }
-
-
-   async removeData(req, res){
+    }
+    
+    async removeData(req,res){
         if(!req.body || !req.session.userId){res.status(418).send("No Data Recieved"); }
         const {items} = req.body, 
-        {uid, docIDs } = req.session.userId; 
-        let userDocID = ''; 
-        if(docIDs.length == 0){ userDocID = uid; }else{ userDocID = docIDs[0]; }
-        
-        const batch = writeBatch(dbRef);
-        
-        for(const data of items ){
-            batch.delete(doc(dbRef, 'userData', userDocID, 'toDoData', JSON.parse(data).itemID))
-        }      
-        try{ await batch.commit(); }
-        catch(err){ this.logEvent(`Batch Commit Error ===> ${err}`); }
-   }
-   
-
+        user = req.session.userId; 
+        /*this.logEvent(`itemID: ${JSON.parse(items[0]).itemID}`)
+        console.log('A Delete Request was recieved')*/
+        try{
+            const data = await this.userData.findOne({'userID' : user.uuid});  
+            if(data){ 
+                for(let i = 0; i < items.length; i++){
+                    const itemID = JSON.parse(items[i]).itemID
+                    this.userData.updateOne({userID : user.uuid}, {$pull : {'toDoListData' : {'itemID' : `${itemID}`}}}, (err,res) =>{
+                        if(err)this.logEvent(`Error in updating: ===> ${err}`); 
+                        else{console.log("Done")}
+                    });
+                }    
+            }
+               
+        }catch(err){
+            this.logEvent(`Unable to Remove Data From Database! ==> ${err}`)
+        }
+    }
 
     runtime = () => {
         
@@ -291,6 +355,4 @@ class mySite{
 
 
 app = new mySite(); 
-//app.runtime();
-
-module.exports = app.runtime();
+app.runtime();
