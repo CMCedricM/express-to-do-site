@@ -1,4 +1,5 @@
 node_modules
 db.json
+vercel.json
 .DS_Store
 vercel.json
