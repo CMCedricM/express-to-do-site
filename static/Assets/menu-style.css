@@ -1,0 +1,11 @@
+nav{
+    text-align: center;
+}
+
+.menu-item{
+    margin: 20px; 
+    text-align: center;
+    font-size: 16pt;
+    text-decoration: none;
+    color: black;
+}
