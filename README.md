@@ -9,6 +9,9 @@ Build Instructions
 `npm install`
 <br><br>
 `npm run start` 
+<br><br>
+In Web Browser: 
+`http://localhost:5150`
 
 Screenshots
 ============
