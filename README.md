@@ -10,7 +10,8 @@ Build Instructions
 <br><br>
 `npm run start` 
 <br><br>
-In Web Browser: 
+In Web Browser Navigate To:
+<br>
 `http://localhost:5150`
 
 Screenshots
