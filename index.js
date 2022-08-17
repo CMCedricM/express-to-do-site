@@ -14,7 +14,8 @@ const dateTime = require('node-datetime');
 // Firebase 
 const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = require('firebase/auth');
 const { collection, query, where, doc, getDoc, getDocs, setDoc, runTransaction, updateDoc, deleteDoc, writeBatch } = require('firebase/firestore');
-const { auth, dbRef } = require('./firebase.config.js')
+const { auth, dbRef } = require('./firebase.config.js');
+const { execPath } = require('process');
 
 
 // Environment 
@@ -54,6 +55,7 @@ class mySite{
         // Bind Function to Class
         //this.runtime = this.runtime.bind(this); <--- Example of binding
         this.login = this.login.bind(this);
+        this.loginapi = this.loginapi.bind(this);
         this.signup = this.signup.bind(this);
         this.logEvent = this.logEvent.bind(this);
         this.addDataTodo = this.addDataTodo.bind(this);
@@ -87,6 +89,22 @@ class mySite{
 
     logEvent(text){
         console.log(`${this.getTime()} ----> ${text}`)
+    }
+
+    async loginapi(req, res){
+        if(!req.body){this.logEvent("Login API Failure"); try{res.status(500).send("Internal Server Error, please try again later...")}catch(err){this.logEvent(`${err}`); } return; }
+        const {email, password} = req.body; 
+        let aUser=''; 
+        try{aUser = await signInWithEmailAndPassword(auth, email, password); }
+        catch(err){ 
+            if(err.code == 'auth/user-not-found'){ res.status(401).send('No Account Found, Please Create One First'); }
+            else if(err.code == 'auth/wrong-password'){ res.status(401).send('Email or Password Incorrect'); }
+            this.logEvent(`Login Failure ==> ${err.code}`); 
+            return; 
+        }
+
+        this.logEvent('User Logged In Through API'); 
+        res.send('Login Accepted!') 
     }
 
 
@@ -267,8 +285,9 @@ class mySite{
         // Home Routes
         this.server.get('/home', (req,res) => { res.redirect('/') } )
         // Login Routes
-        this.server.get(`/login`, (req, res) => { req.session.userId ? res.redirect('dashboard') : res.render('login')});
+        this.server.get(`/login`, (req, res) => { req.session.userIccd ? res.redirect('dashboard') : res.render('login')});
         this.server.post('/login', this.login); 
+        this.server.post('/loginAPI', this.loginapi);
         // Signup Routes
         this.server.get('/signup', (req, res) => {res.render('signup'); });
         this.server.post('/signup', this.signup);
@@ -279,6 +298,7 @@ class mySite{
         this.server.post('/updateStatus', this.updateStatus)
         this.server.post('/removeData', this.removeData)
         // Logout Routes
+        this.server.get('/logoutAPI', (req,res) => { req.session.userId ? req.session.destroy() : res.status(500).send('No User Session Was Found!'); this.logEvent("API User Signed Out") })
         this.server.get('/logout', (req,res) => { req.session.destroy(); res.redirect('/login'); });
         // Catch Bad URL
         this.server.all('*', (req, res) => { res.status(404).render('badPage'); } )
